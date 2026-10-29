@@ -20,8 +20,6 @@ st.set_page_config(
 # Initialize Session States
 if "otp_results" not in st.session_state:
     st.session_state.otp_results = []
-if "unmatched_results" not in st.session_state:
-    st.session_state.unmatched_results = []
 if "logs" not in st.session_state:
     st.session_state.logs = []
 if "is_running" not in st.session_state:
@@ -29,7 +27,7 @@ if "is_running" not in st.session_state:
 if "stop_requested" not in st.session_state:
     st.session_state.stop_requested = False
 
-st.title("📱 ROP Batch File & Multi-Number Match Tool (Streamlit)")
+st.title("📱 ROP Batch & Multi-Number Match Tool (Streamlit)")
 
 # Sidebar Configuration for Host & Headers
 st.sidebar.header("⚙️ Configuration")
@@ -137,7 +135,6 @@ if stop_btn:
 
 if clear_btn:
     st.session_state.otp_results = []
-    st.session_state.unmatched_results = []
     st.session_state.logs = []
     st.session_state.is_running = False
     st.session_state.stop_requested = False
@@ -150,7 +147,6 @@ if start_btn:
         st.session_state.is_running = True
         st.session_state.stop_requested = False
         st.session_state.otp_results = []
-        st.session_state.unmatched_results = []
 
         lines = batch_text_data.split("\n")
         tasks_list = []
@@ -197,9 +193,6 @@ if start_btn:
                 )
 
                 if not success or not data or not data.get("mobile"):
-                    st.session_state.unmatched_results.append(
-                        {"civil_id": civil_id, "last_four": suffix}
-                    )
                     continue
 
                 mobile_dict = data.get("mobile", {})
@@ -248,50 +241,26 @@ if start_btn:
                                 except Exception:
                                     pass
 
-                if not matched_in_this_id and not st.session_state.stop_requested:
-                    st.session_state.unmatched_results.append(
-                        {"civil_id": civil_id, "last_four": suffix}
-                    )
-
             status_container.success("✅ Batch Search Completed!")
             st.session_state.is_running = False
             st.rerun()
 
-# Display Results Section
+# Display Results Section (Only Matched Results & Matched CSV Export)
 st.markdown("---")
-res_col1, res_col2 = st.columns(2)
+st.subheader("🎯 Matched Results")
+if st.session_state.otp_results:
+    df_matched = pd.DataFrame(st.session_state.otp_results)
+    st.dataframe(df_matched, use_container_width=True)
 
-with res_col1:
-    st.subheader("🎯 Matched Results")
-    if st.session_state.otp_results:
-        df_matched = pd.DataFrame(st.session_state.otp_results)
-        st.dataframe(df_matched, use_container_width=True)
-
-        csv_data = df_matched.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            "📥 Export Matched CSV",
-            data=csv_data,
-            file_name="matched_results.csv",
-            mime="text/csv",
-        )
-    else:
-        st.info("No matches found yet.")
-
-with res_col2:
-    st.subheader("⚠️ Unmatched Numbers")
-    if st.session_state.unmatched_results:
-        df_unmatched = pd.DataFrame(st.session_state.unmatched_results)
-        st.dataframe(df_unmatched, use_container_width=True)
-
-        csv_unmatched = df_unmatched.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            "📥 Export Unmatched CSV",
-            data=csv_unmatched,
-            file_name="unmatched_results.csv",
-            mime="text/csv",
-        )
-    else:
-        st.info("No unmatched records yet.")
+    csv_data = df_matched.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "📥 Export Matched CSV",
+        data=csv_data,
+        file_name="matched_results.csv",
+        mime="text/csv",
+    )
+else:
+    st.info("No matches found yet.")
 
 # Live Logs Section
 st.markdown("---")
