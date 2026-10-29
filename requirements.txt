@@ -1,3 +1,4 @@
 streamlit
-curl_cffi
 requests
+pandas
+urllib3
