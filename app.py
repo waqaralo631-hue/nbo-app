@@ -209,10 +209,10 @@ with res_col1:
   if st.session_state.otp_results:
     df_matched = pd.DataFrame(st.session_state.otp_results)
     st.dataframe(df_matched, use_container_width=True)
-    csv_matched = df_matched.to_csv(index=False).encode("utf-8")
+    csv_matched_data = df_matched.to_csv(index=False).encode("utf-8")
     st.download_button(
         "📥 Download Matched CSV",
-        data=csv_data,
+        data=csv_matched_data,
         file_name="matched_results.csv",
         mime="text/csv",
     )
@@ -224,10 +224,10 @@ with res_col2:
   if st.session_state.unmatched_results:
     df_unmatched = pd.DataFrame(st.session_state.unmatched_results)
     st.dataframe(df_unmatched, use_container_width=True)
-    csv_unmatched = df_unmatched.to_csv(index=False).encode("utf-8")
+    csv_unmatched_data = df_unmatched.to_csv(index=False).encode("utf-8")
     st.download_button(
         "📥 Download Unmatched CSV",
-        data=csv_unmatched,
+        data=csv_unmatched_data,
         file_name="unmatched_results.csv",
         mime="text/csv",
     )
